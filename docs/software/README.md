@@ -232,3 +232,452 @@ COMMIT;
 ```
 
 ## RESTfull сервіс для управління даними
+### Підключення до бази даних
+```
+const mysql = require("mysql");
+const conn = mysql.createConnection({
+    host: "localhost",
+    user: "root",
+    password: "root1234",
+    database: "mydb",
+});
+
+conn.connect();
+
+module.exports = conn;
+```
+### Налаштування Express сервера
+```
+const express = require("express");
+const cors = require("cors");
+const router = require("./routes");
+const AppError = require("./utils/appError");
+const errorHandler = require("./utils/errorHandler");
+
+const app = express();
+
+app.use(express.json());
+app.use(cors());
+
+app.use("/api", router);
+
+app.all("*", (req, res, next) => {
+    next(new AppError(`The URL ${req.originalUrl} does not exist`, 404));
+});
+
+app.use(errorHandler);
+
+module.exports = app;
+```
+#### Підключення до порта
+```
+const app = require("./app");
+const dotenv = require("dotenv");
+
+dotenv.config();
+
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
+```
+### Створення контролерів додатка
+#### User controller
+```
+const errorFactory = require("../utils/errorFactory");
+const conn = require("../services/db");
+
+exports.getAllUsers = (req, res, next) => {
+  conn.query("SELECT * FROM User", (err, data) => {
+    if (err) return next(errorFactory.databaseError(err.message));
+    res.status(200).json({
+      status: "success",
+      length: data?.length,
+      data: data,
+    });
+  });
+};
+
+exports.createUser = (req, res, next) => {
+  const { firstName, lastName, email, password } = req.body;
+
+  if (!firstName || !lastName || !email || !password) {
+    return next(errorFactory.validationError("All user fields are required"));
+  }
+
+  const values = [firstName, lastName, email, password];
+  conn.query(
+    "INSERT INTO User (firstName, lastName, email, password) VALUES (?)",
+    [values],
+    (err, data) => {
+      if (err) {
+        if (err.code === "ER_DUP_ENTRY") {
+          return next(errorFactory.conflictError("Email already exists"));
+        }
+        return next(errorFactory.databaseError(err.message));
+      }
+      res.status(201).json({
+        status: "success",
+        message: "User successfully created",
+        data: { id: data.insertId, firstName, lastName, email },
+      });
+    }
+  );
+};
+
+exports.getUserById = (req, res, next) => {
+  const { id } = req.params;
+
+  conn.query("SELECT * FROM User WHERE id = ?", [id], (err, data) => {
+    if (err) return next(errorFactory.databaseError(err.message));
+    if (data.length === 0) {
+      return next(errorFactory.notFound("User not found"));
+    }
+    res.status(200).json({
+      status: "success",
+      data: data[0],
+    });
+  });
+};
+
+exports.updateUser = (req, res, next) => {
+  const { id } = req.params;
+  const { firstName, lastName, email, password } = req.body;
+
+  if (!firstName || !lastName || !password) {
+    return next(errorFactory.validationError("Incomplete user data"));
+  }
+
+  conn.query(
+    "UPDATE User SET firstName = ?, lastName = ?, email = ?, password = ? WHERE id = ?",
+    [firstName, lastName, email, password, id],
+    (err, result) => {
+      if (err) {
+        if (err.code === "ER_DUP_ENTRY") {
+          return next(errorFactory.conflictError("Email already exists"));
+        }
+        return next(errorFactory.databaseError(err.message));
+      }
+      if (result.affectedRows === 0) {
+        return next(errorFactory.notFound("User not found"));
+      }
+      res.status(200).json({
+        status: "success",
+        message: "User successfully updated",
+      });
+    }
+  );
+};
+
+exports.deleteUser = (req, res, next) => {
+  const { id } = req.params;
+
+  conn.query("DELETE FROM Media WHERE userId = ?", [id], (err) => {
+    if (err) return next(errorFactory.databaseError(err.message));
+
+    conn.query("DELETE FROM User WHERE id = ?", [id], (err, result) => {
+      if (err) return next(errorFactory.databaseError(err.message));
+      if (result.affectedRows === 0) {
+        return next(errorFactory.notFound("User not found"));
+      }
+      res.status(200).json({
+        status: "success",
+        message: "User and related media successfully deleted",
+      });
+    });
+  });
+};
+```
+#### Media controller
+```
+const errorFactory = require("../utils/errorFactory");
+const conn = require("../services/db");
+
+exports.getAllMedia = (req, res, next) => {
+  conn.query("SELECT * FROM Media", (err, data) => {
+    if (err) return next(errorFactory.databaseError(err.message));
+    res.status(200).json({
+      status: "success",
+      length: data?.length,
+      data: data,
+    });
+  });
+};
+
+exports.createMedia = (req, res, next) => {
+  const { title, keywords, createdAt, updatedAt, userId } = req.body;
+
+  if (!title || !userId) {
+    return next(errorFactory.validationError("Title and userId are required"));
+  }
+
+  const values = [title, keywords, createdAt, updatedAt, userId];
+  conn.query(
+    "INSERT INTO Media (title, keywords, createdAt, updatedAt, userId) VALUES (?)",
+    [values],
+    (err) => {
+      if (err) return next(errorFactory.databaseError(err.message));
+      res.status(201).json({
+        status: "success",
+        message: "Media successfully created!",
+      });
+    }
+  );
+};
+
+exports.getMediaById = (req, res, next) => {
+  const { id } = req.params;
+
+  conn.query("SELECT * FROM Media WHERE id = ?", [id], (err, data) => {
+    if (err) return next(errorFactory.databaseError(err.message));
+    if (data.length === 0) {
+      return next(errorFactory.notFound("Media not found"));
+    }
+    res.status(200).json({
+      status: "success",
+      data: data[0],
+    });
+  });
+};
+
+exports.updateMedia = (req, res, next) => {
+  const { id } = req.params;
+  const { title, keywords, createdAt, updatedAt, userId } = req.body;
+
+  if (!title || !userId) {
+    return next(errorFactory.validationError("Title and userId are required"));
+  }
+
+  conn.query(
+    "UPDATE Media SET title = ?, keywords = ?, createdAt = ?, updatedAt = ?, userId = ? WHERE id = ?",
+    [title, keywords, createdAt, updatedAt, userId, id],
+    (err, result) => {
+      if (err) return next(errorFactory.databaseError(err.message));
+      if (result.affectedRows === 0) {
+        return next(errorFactory.notFound("Media not found"));
+      }
+      res.status(200).json({
+        status: "success",
+        message: "Media updated successfully",
+      });
+    }
+  );
+};
+
+exports.deleteMedia = (req, res, next) => {
+  const { id } = req.params;
+
+  conn.query("DELETE FROM Media WHERE id = ?", [id], (err, result) => {
+    if (err) return next(errorFactory.databaseError(err.message));
+    if (result.affectedRows === 0) {
+      return next(errorFactory.notFound("Media not found"));
+    }
+    res.status(200).json({
+      status: "success",
+      message: "Media deleted successfully",
+    });
+  });
+};
+```
+#### Roles controller
+```
+const errorFactory = require("../utils/errorFactory");
+const conn = require("../services/db");
+
+exports.getAllRoles = (req, res, next) => {
+  conn.query("SELECT * FROM Role", (err, data) => {
+    if (err) return next(errorFactory.databaseError(err.message));
+    res.status(200).json({
+      status: "success",
+      length: data?.length,
+      data: data,
+    });
+  });
+};
+
+exports.createRole = (req, res, next) => {
+  const { roleName, permission } = req.body;
+
+  if (!roleName || !permission) {
+    return next(errorFactory.validationError("Role name and permission are required"));
+  }
+
+  const values = [roleName, permission];
+  conn.query(
+    "INSERT INTO Role (roleName, permission) VALUES (?)",
+    [values],
+    (err, data) => {
+      if (err) return next(errorFactory.databaseError(err.message));
+      res.status(201).json({
+        status: "success",
+        message: "Role successfully created",
+        data: { id: data.insertId, roleName, permission },
+      });
+    }
+  );
+};
+
+exports.getRoleById = (req, res, next) => {
+  const { id } = req.params;
+
+  conn.query("SELECT * FROM Role WHERE id = ?", [id], (err, data) => {
+    if (err) return next(errorFactory.databaseError(err.message));
+    if (data.length === 0) {
+      return next(errorFactory.notFound("Role not found"));
+    }
+    res.status(200).json({
+      status: "success",
+      data: data[0],
+    });
+  });
+};
+
+exports.updateRole = (req, res, next) => {
+  const { id } = req.params;
+  const { roleName, permission } = req.body;
+
+  if (!roleName || !permission) {
+    return next(errorFactory.validationError("Role name and permission are required"));
+  }
+
+  conn.query(
+    "UPDATE Role SET roleName = ?, permission = ? WHERE id = ?",
+    [roleName, permission, id],
+    (err, result) => {
+      if (err) return next(errorFactory.databaseError(err.message));
+      if (result.affectedRows === 0) {
+        return next(errorFactory.notFound("Role not found"));
+      }
+      res.status(200).json({
+        status: "success",
+        message: "Role successfully updated",
+      });
+    }
+  );
+};
+
+exports.deleteRole = (req, res, next) => {
+  const { id } = req.params;
+
+  conn.query("DELETE FROM Role WHERE id = ?", [id], (err, result) => {
+    if (err) return next(errorFactory.databaseError(err.message));
+    if (result.affectedRows === 0) {
+      return next(errorFactory.notFound("Role not found"));
+    }
+    res.status(200).json({
+      status: "success",
+      message: "Role successfully deleted",
+    });
+  });
+};
+```
+### Cтворення глобальних обробників помилок
+```
+class AppError extends Error {
+    constructor(msg, statusCode) {
+        super(msg);
+
+        this.statusCode = statusCode;
+        this.error = `${statusCode}`.startsWith("4") ? "fail" : "error";
+        this.isOperational = true;
+
+        Error.captureStackTrace(this, this.constructor);
+    }
+}
+
+module.exports = AppError;
+```
+```
+const AppError = require("../utils/appError");
+
+const errorFactory = {
+  databaseError: (details = null) => new AppError(details || "Database error", 500),
+  notFound: (message = "Resource not found") => new AppError(message, 404),
+  validationError: (message = "Invalid data provided") => new AppError(message, 400),
+  conflictError: (message = "Resource conflict") => new AppError(message, 409),
+  customError: (message, statusCode = 500, details = null) =>
+    new AppError(message, statusCode, details),
+};
+
+module.exports = errorFactory;
+```
+```
+module.exports = (err, req, res, next) => {
+    err.statusCode = err.statusCode || 500;
+    err.status = err.status || "error";
+    res.status(err.statusCode).json({
+        status: err.status,
+        message: err.message,
+    });
+};
+```
+### Створення routes
+```
+const express = require("express");
+const userRoutes = require("./userRoutes");
+const mediaRoutes = require("./mediaRoutes");
+const roleRoutes = require("./roleRoutes");
+
+const router = express.Router();
+
+router.use("/users", userRoutes);
+router.use("/media", mediaRoutes);
+router.use("/roles", roleRoutes);
+
+module.exports = router;
+```
+#### userRoutes
+```
+const express = require("express");
+const userController = require("../controllers/userController");
+
+const router = express.Router();
+
+router.route("/")
+    .get(userController.getAllUsers)
+    .post(userController.createUser);
+
+router.route("/:id")
+    .get(userController.getUserById)
+    .put(userController.updateUser)
+    .delete(userController.deleteUser);
+
+module.exports = router;
+```
+#### mediaRoutes
+```
+const express = require("express");
+const mediaController = require("../controllers/mediaController");
+
+const router = express.Router();
+
+router.route("/")
+    .get(mediaController.getAllMedia)
+    .post(mediaController.createMedia);
+
+router.route("/:id")
+    .get(mediaController.getMediaById)
+    .put(mediaController.updateMedia)
+    .delete(mediaController.deleteMedia);
+
+module.exports = router;
+```
+#### roleRoutes
+```
+const express = require("express");
+const roleController = require("../controllers/roleController");
+
+const router = express.Router();
+
+router.route("/")
+    .get(roleController.getAllRoles)
+    .post(roleController.createRole);
+
+router.route("/:id")
+    .get(roleController.getRoleById)
+    .put(roleController.updateRole)
+    .delete(roleController.deleteRole);
+
+module.exports = router;
+```
